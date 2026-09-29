@@ -11,4 +11,5 @@ Spring Boot 4.1 / Java 21 API with MySQL, stateless JWT security, OpenAPI/Swagge
 
 Use `SPRING_PROFILES_ACTIVE=dev` or `prod` and provide `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, and a strong `JWT_SECRET`. Never commit non-local secrets.
 
-Every persistent entity should extend `BaseEntity`; this guarantees an immutable `inserted_date` populated in the Asia/Kolkata time zone.
+Every persistent entity must extend `BaseEntity`. This guarantees a non-null, immutable `created_date`
+containing both date and time, populated using the `Asia/Kolkata` time zone before every database insert.

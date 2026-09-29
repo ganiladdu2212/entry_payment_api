@@ -8,7 +8,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Date;
 import javax.crypto.SecretKey;
-import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -21,18 +20,31 @@ public class JwtTokenProvider {
         this.key = Keys.hmacShaKeyFor(properties.secret().getBytes(StandardCharsets.UTF_8));
     }
 
-    public String createToken(Authentication authentication) {
+    public String createAccessToken(String subject) {
+        return createToken(subject, properties.accessExpiration(), "ACCESS");
+    }
+
+    public String createRefreshToken(String subject) {
+        return createToken(subject, properties.refreshExpiration(), "REFRESH");
+    }
+
+    public long getAccessExpirationSeconds() {
+        return properties.accessExpiration().toSeconds();
+    }
+
+    private String createToken(String subject, java.time.Duration expiration, String tokenType) {
         Instant now = Instant.now();
-        return Jwts.builder().subject(authentication.getName()).issuedAt(Date.from(now))
-                .expiration(Date.from(now.plus(properties.expiration()))).signWith(key).compact();
+        return Jwts.builder().subject(subject).claim("tokenType", tokenType).issuedAt(Date.from(now))
+                .expiration(Date.from(now.plus(expiration))).signWith(key).compact();
     }
 
     public String getSubject(String token) {
         return parse(token).getSubject();
     }
 
-    public boolean isValid(String token) {
-        try { parse(token); return true; } catch (Exception ignored) { return false; }
+    public boolean isValidAccessToken(String token) {
+        try { return "ACCESS".equals(parse(token).get("tokenType", String.class)); }
+        catch (Exception ignored) { return false; }
     }
 
     private Claims parse(String token) {
