@@ -1,6 +1,7 @@
 package com.enty.payment.customer.controller;
 
 import com.enty.payment.customer.request.CustomerLoginRequest;
+import com.enty.payment.customer.request.CustomerChangePasswordRequest;
 import com.enty.payment.customer.request.CustomerRegistrationRequest;
 import com.enty.payment.customer.response.CustomerApiResponse;
 import com.enty.payment.customer.response.CustomerLoginResponse;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import java.security.Principal;
 
 @RestController
 @RequestMapping("/api/v1/customers")
@@ -35,5 +37,12 @@ public class CustomerController {
     public ResponseEntity<CustomerApiResponse<CustomerLoginResponse>> loginCustomer(
             @RequestBody CustomerLoginRequest request) {
         return ResponseEntity.ok(CustomerApiResponse.success("login success", service.login(request)));
+    }
+
+    @PostMapping("/changePassword")
+    public ResponseEntity<CustomerApiResponse<Void>> changePassword(
+            @RequestBody CustomerChangePasswordRequest request, Principal principal) {
+        service.changePassword(request, principal.getName());
+        return ResponseEntity.ok(CustomerApiResponse.success("password updated successfully", null));
     }
 }

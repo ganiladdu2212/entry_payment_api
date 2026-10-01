@@ -11,6 +11,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -29,6 +31,21 @@ public class CustomerSubscriptionController {
             @Valid @RequestBody CustomerSubscriptionRequest request, Principal principal) {
         CustomerSubscriptionResponse data = service.create(request, principal.getName());
         return ResponseEntity.ok(CustomerApiResponse.success("customer subscription created successfully", data));
+    }
+
+    @PutMapping("/updateCustSubscription/{subscriptionId}")
+    public ResponseEntity<CustomerApiResponse<CustomerSubscriptionResponse>> updateCustSubscription(
+            @PathVariable Long subscriptionId, @Valid @RequestBody CustomerSubscriptionRequest request,
+            Principal principal) {
+        CustomerSubscriptionResponse data = service.update(subscriptionId, request, principal.getName());
+        return ResponseEntity.ok(CustomerApiResponse.success("customer subscription updated successfully", data));
+    }
+
+    @DeleteMapping("/deleteCustSubscription/{subscriptionId}")
+    public ResponseEntity<CustomerApiResponse<Void>> deleteCustSubscription(
+            @PathVariable Long subscriptionId, Principal principal) {
+        service.delete(subscriptionId, principal.getName());
+        return ResponseEntity.ok(CustomerApiResponse.success("customer subscription deleted successfully", null));
     }
 
     @GetMapping("/getCustSubscriptions/{custId}")

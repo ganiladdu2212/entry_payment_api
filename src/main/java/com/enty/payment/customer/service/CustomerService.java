@@ -3,6 +3,7 @@ package com.enty.payment.customer.service;
 import com.enty.payment.customer.entity.Customer;
 import com.enty.payment.customer.repository.CustomerRepository;
 import com.enty.payment.customer.request.CustomerLoginRequest;
+import com.enty.payment.customer.request.CustomerChangePasswordRequest;
 import com.enty.payment.customer.request.CustomerRegistrationRequest;
 import com.enty.payment.customer.response.CustomerLoginResponse;
 import com.enty.payment.customer.response.CustomerResponse;
@@ -56,6 +57,31 @@ public class CustomerService {
         String subject = customer.getCustId().toString();
         return new CustomerLoginResponse(CustomerResponse.from(customer), tokenProvider.createAccessToken(subject),
                 tokenProvider.createRefreshToken(subject), "Bearer", tokenProvider.getAccessExpirationSeconds());
+    }
+
+    @Transactional
+    public void changePassword(CustomerChangePasswordRequest request, String principal) {
+        Long customerId;
+        try {
+            customerId = Long.valueOf(principal);
+        } catch (NumberFormatException ex) {
+            throw new CustomerApiException(HttpStatus.FORBIDDEN, "invalid customer identity");
+        }
+        Customer customer = repository.findById(customerId)
+                .orElseThrow(() -> new CustomerApiException(HttpStatus.NOT_FOUND, "customer not found"));
+        String mobile = normalize(request.mobileNumber());
+        String oldPassword = normalize(request.oldPwd());
+        String newPassword = normalize(request.newPwd());
+        if (mobile == null || oldPassword == null || newPassword == null)
+            throw badRequest("mobileNumber, oldPwd, and newPwd are mandatory");
+        if (!mobile.equals(customer.getMobileNumber()) || !passwordEncoder.matches(request.oldPwd(), customer.getPassword()))
+            throw new CustomerApiException(HttpStatus.UNAUTHORIZED, "mobile number or old password is incorrect");
+        if (newPassword.length() < 8 || newPassword.length() > 72)
+            throw badRequest("newPwd must contain 8 to 72 characters");
+        if (passwordEncoder.matches(request.newPwd(), customer.getPassword()))
+            throw badRequest("newPwd must be different from the old password");
+        customer.setPassword(passwordEncoder.encode(request.newPwd()));
+        repository.saveAndFlush(customer);
     }
 
     private CustomerResponse create(CustomerRegistrationRequest request) {

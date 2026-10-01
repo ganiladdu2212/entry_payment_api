@@ -72,14 +72,12 @@ public class AttendanceService {
         var event=new UserAttendanceEvent(); event.setCustomer(user.getCustomer()); event.setUser(user);
         event.setUserName(user.getName()); event.setMobileNumber(user.getMobileNumber()); event.setDeviceUniqueId(device); event.setActionType(action);
         events.saveAndFlush(event);
-        return new AttendanceResponse(false,event.getAttendanceEventId(),user.getUserId(),user.getName(),user.getMobileNumber(),
+        return new AttendanceResponse(event.getAttendanceEventId(),user.getUserId(),user.getName(),user.getMobileNumber(),
             action,event.getCreatedDate(),"CHECK_IN".equals(action)?"CHECK_OUT":"CHECK_IN",registered);
     }
     @Transactional(readOnly=true)
     public java.util.List<AttendanceEventResponse> getEvents(Long userId,String principal) {
-        Long custId;
-        try { custId=Long.valueOf(principal); }
-        catch(NumberFormatException ex) { throw error(HttpStatus.FORBIDDEN,"invalid customer identity"); }
+        Long custId=customerId(principal);
         if(!customers.existsById(custId)) throw error(HttpStatus.NOT_FOUND,"customer not found");
         if(userId!=null) {
             MemberUser user=users.findById(userId).orElseThrow(() -> error(HttpStatus.NOT_FOUND,"user not found"));
@@ -91,6 +89,10 @@ public class AttendanceService {
             .stream().map(AttendanceEventResponse::from).toList();
     }
     private boolean blank(String value) { return value==null || value.isBlank(); }
+    private Long customerId(String principal) {
+        try { return Long.valueOf(principal); }
+        catch(NumberFormatException ex) { throw error(HttpStatus.FORBIDDEN,"invalid customer identity"); }
+    }
     private String required(String value,String field,int max) {
         if(blank(value) || value.trim().length()>max) throw error(HttpStatus.BAD_REQUEST,field+" is required and must be at most "+max+" characters");
         return value.trim();

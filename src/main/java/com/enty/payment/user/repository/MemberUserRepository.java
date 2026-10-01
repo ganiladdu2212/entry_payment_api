@@ -6,4 +6,6 @@ public interface MemberUserRepository extends JpaRepository<MemberUser, Long> {
     java.util.List<MemberUser> findByCustomerCustIdOrderByCreatedDateDescUserIdDesc(Long custId);
     @org.springframework.data.jpa.repository.EntityGraph(attributePaths={"customer", "subscription", "subscription.membershipPlan", "subscription.trainingPlan"})
     java.util.List<MemberUser> findAllByCustomerCustIdAndMobileNumber(Long custId, String mobileNumber);
+    boolean existsByCustomerCustIdAndMobileNumber(Long custId, String mobileNumber);
+    boolean existsByCustomerCustIdAndMobileNumberAndUserIdNot(Long custId, String mobileNumber, Long userId);
 }

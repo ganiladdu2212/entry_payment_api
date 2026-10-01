@@ -40,6 +40,7 @@ public class CustomerSubscriptionService {
         Customer customer = customerRepository.findById(request.custId())
                 .orElseThrow(() -> new CustomerApiException(HttpStatus.NOT_FOUND, "customer not found"));
         String durationUnit = normalizeDurationUnit(request.durationUnit());
+        validateDuration(durationUnit, request.durationValue());
         Savings savings = calculateSavings(request.custId(), typeOfPlan, durationUnit,
                 request.durationValue(), request.basePriceMinor());
 
@@ -54,7 +55,50 @@ public class CustomerSubscriptionService {
         subscription.setDurationValue(request.durationValue());
         subscription.setPlanName(planName);
         subscription.setTypeOfPlan(typeOfPlan);
-        return CustomerSubscriptionResponse.from(subscriptionRepository.save(subscription));
+        CustomerSubscription saved = subscriptionRepository.save(subscription);
+        if (isMonthlyBaseline(durationUnit, request.durationValue()))
+            refreshSavings(request.custId(), typeOfPlan, saved);
+        return CustomerSubscriptionResponse.from(saved);
+    }
+
+    @Transactional
+    public CustomerSubscriptionResponse update(Long subscriptionId, CustomerSubscriptionRequest request,
+            String authenticatedCustomerId) {
+        assertCustomerAccess(request.custId(), authenticatedCustomerId);
+        CustomerSubscription subscription = subscriptionRepository.findById(subscriptionId)
+                .orElseThrow(() -> new CustomerApiException(HttpStatus.NOT_FOUND, "subscription plan not found"));
+        if (!subscription.getCustomer().getCustId().equals(request.custId()))
+            throw new CustomerApiException(HttpStatus.FORBIDDEN, "subscription plan belongs to another customer");
+        String planName = request.planName().trim();
+        String typeOfPlan = normalizeTypeOfPlan(request.typeOfPlan());
+        if (subscriptionRepository.existsByCustomerCustIdAndTypeOfPlanAndPlanNameIgnoreCaseAndSubscriptionIdNot(
+                request.custId(), typeOfPlan, planName, subscriptionId))
+            throw new CustomerApiException(HttpStatus.CONFLICT, "subscription plan already exists");
+        String durationUnit = normalizeDurationUnit(request.durationUnit());
+        validateDuration(durationUnit, request.durationValue());
+        Savings savings = calculateSavings(request.custId(), typeOfPlan, durationUnit,
+                request.durationValue(), request.basePriceMinor(), subscriptionId);
+        subscription.setActive(request.active() == null || request.active());
+        subscription.setBasePriceMinor(request.basePriceMinor());
+        subscription.setSavingsMinor(savings.amount());
+        subscription.setSavingsPercentage(savings.percentage());
+        subscription.setCurrency(normalizeCurrency(request.currency()));
+        subscription.setDurationUnit(durationUnit);
+        subscription.setDurationValue(request.durationValue());
+        subscription.setPlanName(planName);
+        subscription.setTypeOfPlan(typeOfPlan);
+        CustomerSubscription saved = subscriptionRepository.save(subscription);
+        if (isMonthlyBaseline(durationUnit, request.durationValue()))
+            refreshSavings(request.custId(), typeOfPlan, saved);
+        return CustomerSubscriptionResponse.from(saved);
+    }
+
+    @Transactional
+    public void delete(Long subscriptionId, String authenticatedCustomerId) {
+        CustomerSubscription subscription = subscriptionRepository.findById(subscriptionId)
+                .orElseThrow(() -> new CustomerApiException(HttpStatus.NOT_FOUND, "subscription plan not found"));
+        assertCustomerAccess(subscription.getCustomer().getCustId(), authenticatedCustomerId);
+        subscriptionRepository.delete(subscription);
     }
 
     @Transactional(readOnly = true)
@@ -79,28 +123,52 @@ public class CustomerSubscriptionService {
         String unit = value.trim().replace("-", "").replace("_", "").replace(" ", "")
                 .toUpperCase(Locale.ROOT);
         return switch (unit) {
+            case "DAY", "DAILY", "DAYS" -> "DAY";
+            case "WEEK", "WEEKLY", "WEEKS" -> "WEEK";
             case "MONTH", "MONTHLY" -> "MONTHLY";
             case "QUARTER", "QUARTERLY", "QUOTERLY", "QUATERLY" -> "QUARTERLY";
             case "HALFYEAR", "HALFYEARLY", "HAFYEARLY" -> "HALF_YEARLY";
-            case "YEAR", "YEARLY" -> "YEARLY";
-            default -> value.trim();
+            case "YEAR" -> "YEAR";
+            case "YEARLY" -> "YEARLY";
+            default -> throw new CustomerApiException(HttpStatus.BAD_REQUEST,
+                    "durationUnit must be DAY, WEEK, MONTH, YEAR, MONTHLY, QUARTERLY, HALF_YEARLY, or YEARLY");
         };
+    }
+
+    private void validateDuration(String unit, Integer value) {
+        int maximum = switch (unit) {
+            case "DAY" -> 3650;
+            case "WEEK" -> 520;
+            case "YEAR" -> 10;
+            default -> 120;
+        };
+        if (value == null || value < 1 || value > maximum) {
+            throw new CustomerApiException(HttpStatus.BAD_REQUEST,
+                    "durationValue for " + unit + " must be between 1 and " + maximum);
+        }
     }
 
     private Savings calculateSavings(Long custId, String typeOfPlan, String durationUnit,
             Integer durationValue, Long planPrice) {
-        int months = effectiveMonths(durationUnit, durationValue);
-        if (months == 1) {
+        return calculateSavings(custId, typeOfPlan, durationUnit, durationValue, planPrice, null);
+    }
+
+    private Savings calculateSavings(Long custId, String typeOfPlan, String durationUnit,
+            Integer durationValue, Long planPrice, Long updatingId) {
+        if (isMonthlyBaseline(durationUnit, durationValue)) {
             return new Savings(0L, BigDecimal.ZERO.setScale(2));
         }
 
         CustomerSubscription monthlyPlan = subscriptionRepository
                 .findFirstByCustomerCustIdAndTypeOfPlanAndDurationUnitAndDurationValueOrderBySubscriptionIdAsc(
                         custId, typeOfPlan, "MONTHLY", 1)
-                .orElseThrow(() -> new CustomerApiException(HttpStatus.BAD_REQUEST,
-                        "create the one-month plan first to calculate savings"));
+                .orElse(null);
+        if (monthlyPlan == null)
+            return new Savings(0L, BigDecimal.ZERO.setScale(2));
+        if (updatingId != null && monthlyPlan.getSubscriptionId().equals(updatingId))
+            return new Savings(0L, BigDecimal.ZERO.setScale(2));
 
-        long regularPrice = Math.multiplyExact(monthlyPlan.getBasePriceMinor(), months);
+        long regularPrice = regularPrice(monthlyPlan.getBasePriceMinor(), durationUnit, durationValue);
         long savingsAmount = Math.max(regularPrice - planPrice, 0L);
         BigDecimal percentage = regularPrice == 0 ? BigDecimal.ZERO.setScale(2)
                 : BigDecimal.valueOf(savingsAmount).multiply(ONE_HUNDRED)
@@ -108,13 +176,43 @@ public class CustomerSubscriptionService {
         return new Savings(savingsAmount, percentage);
     }
 
-    private int effectiveMonths(String durationUnit, Integer durationValue) {
-        return switch (durationUnit) {
-            case "QUARTERLY" -> 3;
-            case "HALF_YEARLY" -> 6;
-            case "YEARLY" -> 12;
-            default -> durationValue;
+    private void refreshSavings(Long custId, String typeOfPlan, CustomerSubscription monthlyPlan) {
+        for (CustomerSubscription plan : subscriptionRepository
+                .findByCustomerCustIdAndTypeOfPlanOrderBySubscriptionIdAsc(custId, typeOfPlan)) {
+            if (isMonthlyBaseline(plan.getDurationUnit(), plan.getDurationValue())) {
+                plan.setSavingsMinor(0L);
+                plan.setSavingsPercentage(BigDecimal.ZERO.setScale(2));
+            } else {
+                long regularPrice = regularPrice(monthlyPlan.getBasePriceMinor(),
+                        plan.getDurationUnit(), plan.getDurationValue());
+                long amount = Math.max(regularPrice - plan.getBasePriceMinor(), 0L);
+                BigDecimal percentage = regularPrice == 0 ? BigDecimal.ZERO.setScale(2)
+                        : BigDecimal.valueOf(amount).multiply(ONE_HUNDRED)
+                                .divide(BigDecimal.valueOf(regularPrice), 2, RoundingMode.HALF_UP);
+                plan.setSavingsMinor(amount);
+                plan.setSavingsPercentage(percentage);
+            }
+        }
+    }
+
+    private boolean isMonthlyBaseline(String durationUnit, Integer durationValue) {
+        return ("MONTH".equals(durationUnit) || "MONTHLY".equals(durationUnit)) && durationValue == 1;
+    }
+
+    private long regularPrice(long monthlyPrice, String durationUnit, int durationValue) {
+        BigDecimal equivalentMonths = switch (durationUnit) {
+            case "DAY" -> BigDecimal.valueOf(durationValue).divide(BigDecimal.valueOf(30), 8,
+                    RoundingMode.HALF_UP);
+            case "WEEK" -> BigDecimal.valueOf(durationValue).multiply(BigDecimal.valueOf(7))
+                    .divide(BigDecimal.valueOf(30), 8, RoundingMode.HALF_UP);
+            case "YEAR" -> BigDecimal.valueOf(durationValue).multiply(BigDecimal.valueOf(12));
+            case "QUARTERLY" -> BigDecimal.valueOf(3);
+            case "HALF_YEARLY" -> BigDecimal.valueOf(6);
+            case "YEARLY" -> BigDecimal.valueOf(12);
+            default -> BigDecimal.valueOf(durationValue);
         };
+        return BigDecimal.valueOf(monthlyPrice).multiply(equivalentMonths)
+                .setScale(0, RoundingMode.HALF_UP).longValueExact();
     }
 
     private String normalizeTypeOfPlan(String value) {
