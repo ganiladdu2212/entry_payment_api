@@ -12,11 +12,15 @@ import lombok.Getter;
 public abstract class BaseEntity {
     private static final ZoneId INDIA_ZONE = ZoneId.of("Asia/Kolkata");
 
-    @Column(name = "inserted_date", nullable = false, updatable = false)
-    private LocalDateTime insertedDate;
+    protected BaseEntity() {
+        // Required by JPA/Hibernate for entity construction.
+    }
+
+    @Column(name = "created_date", nullable = false, updatable = false)
+    private LocalDateTime createdDate;
 
     @PrePersist
-    protected void setInsertedDate() {
-        if (insertedDate == null) insertedDate = LocalDateTime.now(INDIA_ZONE);
+    protected void setCreatedDate() {
+        if (createdDate == null) createdDate = LocalDateTime.now(INDIA_ZONE);
     }
 }
